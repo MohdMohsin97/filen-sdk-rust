@@ -1,11 +1,12 @@
 use reqwest::{Client, Response};
 use std::collections::HashMap;
 use std::time::Duration;
-use reqwest::header::HeaderMap;
-
+use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE, ACCEPT};
+use serde_json::Value;
+use std::error::Error;
 
 struct APIClientConfig {
-    apiKey: String,
+    api_key: String,
 }
 
 enum HttpMethod {
@@ -132,26 +133,55 @@ impl APIClient {
         }
     }
 
-    fn build_headers(&self, params: Option<&HashMap<String, String>>) -> HashMap<String, String> {
-        let mut headers = HashMap::new();
+    fn build_headers(&self, params: Option<String>) -> HeaderMap {
+        let mut headers = HeaderMap::new();
         headers.insert(
-            "Authorization".to_string(),
+            reqwest::header::AUTHORIZATION,
             format!(
                 "Bearer {}",
                 params
-                    .and_then(|p| p.get("api_key"))
-                    .unwrap_or(&self.config.apiKey)
-            ),
+                    .unwrap_or_else(|| self.config.api_key.clone())
+            ).parse().unwrap(),
         );
-        headers.insert("Accept".to_string(), "application/json, text/plain, */*".to_string());
+        headers.insert(reqwest::header::ACCEPT, "application/json, text/plain, */*".parse().unwrap());
         headers
     }
 
-    async fn post(&self, params: PostRequestParameters) {
-        let mut headers = if let Some(h) = &params.base.headers {
+    //Implement this :
+    //...(environment === "node" ? { "User-Agent": "filen-sdk" } : {})
+
+    /*async fn post(&self, params: PostRequestParameters) {
+        let mut _headers = if let Some(h) = &params.base.headers {
             h.clone()
         } else {
-            self.build_headers(Some(&params.base.api_key))
+            self.build_headers(Some(params.base.api_key.unwrap().clone()))
         };
+    }*/
+    async fn post(&self, params: PostRequestParameters) -> Result<Response, Box<dyn Error>> {
+        let client = Client::new();
+        let mut headers = if let Some(h) = params.base.headers {
+            h
+        } else {
+            self.build_headers(params.base.api_key.clone())
+        };
+
+        if let Some(api_key) = &params.base.api_key {
+            if !headers.contains_key(AUTHORIZATION) {
+                headers.insert(AUTHORIZATION, HeaderValue::from_str(&format!("Bearer {}", api_key)).unwrap());
+            }
+        }
+
+        let url = params.base.url.unwrap_or_else(|| {
+            "https://default.url".to_string()
+        });
+
+        if url.is_empty() {
+            return Err("No URL.".into());
+        }
+
+        let post_data_is_buffer = params.data.is_array() || params.data.is_object();
+
+        if params.headers.is_none() && !post_data_is_buffer {
+        }
     }
 }
