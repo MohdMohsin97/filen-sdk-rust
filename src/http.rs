@@ -1,9 +1,12 @@
 use reqwest::{Client, Response};
+use core::time;
 use std::collections::HashMap;
 use std::time::Duration;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE, ACCEPT};
 use serde_json::Value;
 use std::error::Error;
+use rand::seq::SliceRandom;
+use rand::thread_rng;
 
 struct APIClientConfig {
     api_key: String,
@@ -14,6 +17,7 @@ enum HttpMethod {
     Post,
 }
 
+#[derive(serde::Serialize)]
 struct BaseRequestParameters {
     endpoint: String,
     url: Option<String>,
@@ -69,6 +73,17 @@ struct UploadChunkResponse {
     region: String,
 }
 
+struct APIClientDefaults {
+    gateway_urls: &'static [&'static str],
+    egest_urls: &'static [&'static str],
+    ingest_urls: &'static [&'static str],
+    gateway_timeout: Duration,
+    egest_timeout: Duration,
+    ingest_timeout: Duration,
+    max_retries: u32,
+    retry_timeout: Duration,
+}
+
 static API_CLIENT_DEFAULTS: APIClientDefaults = APIClientDefaults {
     gateway_urls: &[
         "https://gateway.filen.io",
@@ -107,18 +122,6 @@ static API_CLIENT_DEFAULTS: APIClientDefaults = APIClientDefaults {
     max_retries: 64,
     retry_timeout: Duration::from_millis(1000),
 };
-
-
-struct APIClientDefaults {
-    gateway_urls: &'static [&'static str],
-    egest_urls: &'static [&'static str],
-    ingest_urls: &'static [&'static str],
-    gateway_timeout: Duration,
-    egest_timeout: Duration,
-    ingest_timeout: Duration,
-    max_retries: u32,
-    retry_timeout: Duration,
-}
 
 struct APIClient {
     client: Client,
@@ -170,10 +173,13 @@ impl APIClient {
                 headers.insert(AUTHORIZATION, HeaderValue::from_str(&format!("Bearer {}", api_key)).unwrap());
             }
         }
+        let mut rng = thread_rng();
+
 
         let url = params.base.url.unwrap_or_else(|| {
-            "https://default.url".to_string()
+            API_CLIENT_DEFAULTS.gateway_urls.choose(&mut rng).unwrap().to_string()
         });
+        //use match here, remove unwrap
 
         if url.is_empty() {
             return Err("No URL.".into());
@@ -181,7 +187,75 @@ impl APIClient {
 
         let post_data_is_buffer = params.data.is_array() || params.data.is_object();
 
-        if params.headers.is_none() && !post_data_is_buffer {
+        if params.base.headers.is_none() && !post_data_is_buffer {
+            let checksum = buffer_to_hash(&params.data).await?;
+            headers.insert("Checksum", HeaderValue::from_str(&checksum).unwrap());
         }
+
+        let timeout = params.base.timeout.unwrap_or(Duration::from_millis(3000));
+        let request = client.post(&format!("{}{}", url, params.base.endpoint))
+            .headers(headers)
+            .timeout(timeout);
+
+        let request = if post_data_is_buffer {
+            match params.data.downcast_ref::<String>() {
+                Some(s) => request.body(s.clone()),
+                None => return Err("Expected data to be a String".into()),
+            }
+        } else {
+            request.json(&params.data)
+        };
+
+        let response = request.send().await?;
+
+        if response.status().is_success() {
+            if let Some(response_type) = params.base.response_type {
+                if response_type == "stream" {
+                    // Handle stream response
+                } else if response_type == "json" {
+                    let json: Value = response.json().await?;
+                    println!("Response JSON: {:?}", json);
+                }
+            }
+        } else {
+            println!("Request failed with status: {}", response.status());
+        }
+
+        Ok(())
     }
 }
+
+async fn buffer_to_hash(data: &Value) -> Result<String, Box<dyn Error>> {
+    use sha2::{Sha512, Digest};
+    let mut hasher = Sha512::new();
+    hasher.update(data.to_string().as_bytes());
+    let result = hasher.finalize();
+    Ok(format!("{:x}", result))
+}
+
+//Copilot generated main function
+// #[tokio::main]
+// async fn main() {
+//     let client = APIClient {
+//         config: Config {
+//             api_key: "your_api_key".to_string(),
+//         },
+//     };
+
+//     let params = PostRequestParameters {
+//         base: BaseParams {
+//             api_key: Some("your_api_key".to_string()),
+//             url: None,
+//         },
+//         data: serde_json::json!({ "key": "value" }),
+//         headers: None,
+//         timeout: Some(30000),
+//         response_type: Some("json".to_string()),
+//         endpoint: "/your-endpoint".to_string(),
+//     };
+
+//     match client.post(params).await {
+//         Ok(_) => println!("Request successful"),
+//         Err(e) => println!("Request failed: {}", e),
+//     }
+// }
