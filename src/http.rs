@@ -1,12 +1,10 @@
-use reqwest::{Client, Response};
-use core::time;
-use std::collections::HashMap;
-use std::time::Duration;
-use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE, ACCEPT};
-use serde_json::Value;
-use std::error::Error;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
+use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION};
+use reqwest::{Client, Response};
+use serde_json::Value;
+use std::error::Error;
+use std::time::Duration;
 
 struct APIClientConfig {
     api_key: String,
@@ -27,6 +25,7 @@ struct BaseRequestParameters {
     retry_timeout: Option<Duration>,
     response_type: Option<ResponseType>,
     headers: Option<HeaderMap>,
+    // Functions cannot be serialised. find a workaround
     on_upload_progress: Option<Box<dyn Fn(u64, u64) + Send>>,
     on_download_progress: Option<Box<dyn Fn(u64, u64) + Send>>,
     api_key: Option<String>,
@@ -47,6 +46,15 @@ struct GetRequestParameters {
 struct PostRequestParameters {
     base: BaseRequestParameters,
     method: HttpMethod,
+    // XXX:
+    // data can be one of many types, represent those in an enum and flatten it. Using dyn Any
+    // comes with no benefit, use strict typing and represent all request _types_ possible.
+    // Consider this pseudocode
+    // data: PostRquestData {
+    //     UplaodRequest(entitiy)
+    //     DownlaodRequest(entitiy)
+    //     ...
+    // }
     data: Box<dyn std::any::Any + Send>,
     include_raw: Option<bool>,
 }
@@ -58,13 +66,26 @@ enum RequestParameters {
 
 impl GetRequestParameters {
     fn new(base: BaseRequestParameters, include_raw: Option<bool>) -> Self {
-        GetRequestParameters { base, method: HttpMethod::Get, include_raw }
+        GetRequestParameters {
+            base,
+            method: HttpMethod::Get,
+            include_raw,
+        }
     }
 }
 
 impl PostRequestParameters {
-    fn new(base: BaseRequestParameters, data: Box<dyn std::any::Any + Send>, include_raw: Option<bool>) -> Self {
-        PostRequestParameters { base, method: HttpMethod::Post,data,  include_raw }
+    fn new(
+        base: BaseRequestParameters,
+        data: Box<dyn std::any::Any + Send>,
+        include_raw: Option<bool>,
+    ) -> Self {
+        PostRequestParameters {
+            base,
+            method: HttpMethod::Post,
+            data,
+            include_raw,
+        }
     }
 }
 
@@ -142,11 +163,15 @@ impl APIClient {
             reqwest::header::AUTHORIZATION,
             format!(
                 "Bearer {}",
-                params
-                    .unwrap_or_else(|| self.config.api_key.clone())
-            ).parse().unwrap(),
+                params.unwrap_or_else(|| self.config.api_key.clone())
+            )
+            .parse()
+            .unwrap(),
         );
-        headers.insert(reqwest::header::ACCEPT, "application/json, text/plain, */*".parse().unwrap());
+        headers.insert(
+            reqwest::header::ACCEPT,
+            "application/json, text/plain, */*".parse().unwrap(),
+        );
         headers
     }
 
@@ -170,14 +195,20 @@ impl APIClient {
 
         if let Some(api_key) = &params.base.api_key {
             if !headers.contains_key(AUTHORIZATION) {
-                headers.insert(AUTHORIZATION, HeaderValue::from_str(&format!("Bearer {}", api_key)).unwrap());
+                headers.insert(
+                    AUTHORIZATION,
+                    HeaderValue::from_str(&format!("Bearer {}", api_key)).unwrap(),
+                );
             }
         }
         let mut rng = thread_rng();
 
-
         let url = params.base.url.unwrap_or_else(|| {
-            API_CLIENT_DEFAULTS.gateway_urls.choose(&mut rng).unwrap().to_string()
+            API_CLIENT_DEFAULTS
+                .gateway_urls
+                .choose(&mut rng)
+                .unwrap()
+                .to_string()
         });
         //use match here, remove unwrap
 
@@ -185,6 +216,13 @@ impl APIClient {
             return Err("No URL.".into());
         }
 
+        // XXX: This is (kinda)impossible in rust and a bad design pattern (Reason to avoid any).
+        // This can be made into
+        //
+        // match params.data {
+        //   UplaodRequest(req) => req.do();
+        //   ..
+        // }
         let post_data_is_buffer = params.data.is_array() || params.data.is_object();
 
         if params.base.headers.is_none() && !post_data_is_buffer {
@@ -193,7 +231,8 @@ impl APIClient {
         }
 
         let timeout = params.base.timeout.unwrap_or(Duration::from_millis(3000));
-        let request = client.post(&format!("{}{}", url, params.base.endpoint))
+        let request = client
+            .post(&format!("{}{}", url, params.base.endpoint))
             .headers(headers)
             .timeout(timeout);
 
@@ -210,8 +249,10 @@ impl APIClient {
 
         if response.status().is_success() {
             if let Some(response_type) = params.base.response_type {
+                // XXX: Incompatible types cannot be compared
                 if response_type == "stream" {
                     // Handle stream response
+                    unimplemented!("Stream ahndling not implemented");
                 } else if response_type == "json" {
                     let json: Value = response.json().await?;
                     println!("Response JSON: {:?}", json);
@@ -226,7 +267,7 @@ impl APIClient {
 }
 
 async fn buffer_to_hash(data: &Value) -> Result<String, Box<dyn Error>> {
-    use sha2::{Sha512, Digest};
+    use sha2::{Digest, Sha512};
     let mut hasher = Sha512::new();
     hasher.update(data.to_string().as_bytes());
     let result = hasher.finalize();
