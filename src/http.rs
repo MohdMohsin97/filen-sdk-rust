@@ -1,102 +1,151 @@
+use reqwest::blocking::Client as HttpClient;
 use serde::{Deserialize, Serialize};
+use serde_json::{to_vec, Value};
+use std::{error::Error, fmt::Debug, time::Duration};
 
-struct BaseUrlChooser;
+const GATEWAY_URL: &str = "https://gateway.filen.io";
 
-impl BaseUrlChooser {
-    fn new() -> Self {
-        BaseUrlChooser
+#[derive(Debug, Serialize, Clone, Copy)]
+pub enum HttpMethod {
+    GET,
+    POST,
+    PUT,
+    DELETE,
+}
+
+impl HttpMethod {
+    fn as_str(&self) -> &str {
+        match self {
+            HttpMethod::GET => "GET",
+            HttpMethod::POST => "POST",
+            HttpMethod::PUT => "PUT",
+            HttpMethod::DELETE => "DELETE",
+        }
     }
 
-    fn api_url(&self) -> url::Url {
-        // Randomly chose one of 6 API endpoints
-        url::Url::parse("https://api.filen.io").unwrap()
+    fn to_reqwest_method(&self) -> reqwest::Method {
+        match self {
+            HttpMethod::GET => reqwest::Method::GET,
+            HttpMethod::POST => reqwest::Method::POST,
+            HttpMethod::PUT => reqwest::Method::PUT,
+            HttpMethod::DELETE => reqwest::Method::DELETE,
+        }
     }
 }
 
-#[derive(Debug, Deserialize, PartialEq, Eq)]
-struct InfoResponse {
-    email: String,
-    auth_version: i32,
-    salt: String,
-    id: i64,
+#[derive(Debug)]
+pub struct RequestError {
+    message: String,
+    method: HttpMethod,
+    path: String,
+    source: Box<dyn Error>,
 }
 
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum DataVariant {
-    Info(InfoResponse),
+impl RequestError {
+    fn new(message: String, method: HttpMethod, path: String, source: Box<dyn Error>) -> RequestError {
+        RequestError {
+            message,
+            method,
+            path,
+            source,
+        }
+    }
 }
 
-#[derive(Deserialize)]
-struct GenericRespone {
+impl std::fmt::Display for RequestError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "RequestError: {}", self.message)
+    }
+}
+
+impl Error for RequestError {}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ApiResponse {
     status: bool,
     message: String,
     code: String,
-    data: DataVariant,
+    data: Option<Value>,
 }
 
-#[derive(Serialize)]
-struct InfoRequest {
-    email: String,
-}
-
-struct ApiClient {
+pub struct Client {
     api_key: Option<String>,
-    base_url: BaseUrlChooser,
 }
 
-impl ApiClient {
-    pub fn new_with_api_key(api_key: &str) -> Self {
-        Self {
-            api_key: Some(api_key.to_string()),
-            base_url: BaseUrlChooser,
-        }
+impl Client {
+    pub fn new(key: String) -> Client {
+        Client { api_key: Some(key) }
     }
 
-    pub fn new() -> Self {
-        Self {
-            api_key: None,
-            base_url: BaseUrlChooser,
-        }
-    }
-
-    pub fn get_info(&self, email: &str) -> Result<InfoResponse, String> {
-        // Call /info endpoint and return Salt
-        let info_req = InfoRequest {
-            email: email.to_string(),
+    pub fn request<T: Serialize + Debug>(
+        &self,
+        method: HttpMethod,
+        path: String,
+        request: Option<T>,
+    ) -> Result<ApiResponse, RequestError> {
+        // Marshalled request body
+        let marshalled = if let Some(req_body) = request {
+            match to_vec(&req_body) {
+                Ok(json) => json,
+                Err(err) => {
+                    return Err(RequestError::new(
+                        format!("Cannot marshal request body: {:?}", req_body),
+                        method,
+                        path.to_string(),
+                        Box::new(err),
+                    ));
+                }
+            }
+        } else {
+            vec![]
         };
 
-        let json_value = serde_json::to_value(&info_req).unwrap();
-        println!("JSON: {:?}", json_value);
-        Ok(InfoResponse {
-            email: "dummy@email.com".to_string(),
-            auth_version: 0,
-            salt: "dummy".to_string(),
-            id: 0,
-        })
-    }
-}
+        // Build request
+        let url = format!("{}{}", GATEWAY_URL, path);
+        let client = HttpClient::new();
+        let req = client
+            .request(method.to_reqwest_method(), url)
+            .body(marshalled)
+            .header("Content-Type", "application/json");
 
-// #[cfg(test)]
-mod test {
+        // // Set Authorization header if API key is present
+        // if let Some(ref api_key) = self.api_key {
+        //     req = req.header("Authorization", format!("Bearer {}", api_key));
+        // }
 
-    #[test]
-    fn info_api() {
-        let api_client = super::ApiClient::new();
+        // Send the request
+        let response = req.timeout(Duration::from_secs(10)).send().map_err(|err| {
+            RequestError::new(
+                "Cannot send request".to_string(),
+                method,
+                path.to_string(),
+                Box::new(err),
+            )
+        })?;
 
-        let resposne = api_client.get_info("dummy@email.com");
+        // Read response body
+        let res_body = response.bytes().map_err(|err| {
+            RequestError::new(
+                "Cannot read response body".to_string(),
+                method,
+                path.to_string(),
+                Box::new(err),
+            )
+        })?;
 
-        // let test_config = read_rom.then_parse_into_toml_struct;
+        // Parse the response
+        let api_response: ApiResponse = serde_json::from_slice(&res_body).map_err(|err| {
+            RequestError::new(
+                format!(
+                    "Cannot unmarshal response {}",
+                    String::from_utf8_lossy(&res_body)
+                ),
+                method,
+                path.to_string(),
+                Box::new(err),
+            )
+        })?;
 
-        let expected_response = super::InfoResponse {
-            email: "dummy@email.com".to_string(),
-            auth_version: 0,
-            salt: "dummy".to_string(),
-            id: 0,
-        };
-
-        assert!(resposne.is_ok());
-
-        assert_eq!(resposne.unwrap(), expected_response);
+        Ok(api_response)
     }
 }
