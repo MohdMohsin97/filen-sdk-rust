@@ -1,7 +1,10 @@
 use ring::pbkdf2;
+use ring::digest::{Context, SHA512};
 use serde::{Deserialize, Serialize};
 use std::num::NonZeroU32;
-use base64::{engine::general_purpose::STANDARD};
+use std::error::Error;
+
+static PBKDF2_ALG: pbkdf2::Algorithm = pbkdf2::PBKDF2_HMAC_SHA512;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DeriveKeyFromPasswordParams {
@@ -14,7 +17,7 @@ pub struct DeriveKeyFromPasswordParams {
     pub environment: String,
 }
 
-pub fn derive_key_from_password(params: DeriveKeyFromPasswordParams) -> Result<String, Err> {
+pub fn derive_key_from_password(params: DeriveKeyFromPasswordParams) -> Result<String, Box<dyn Error>> {
     // if params.environment == "node" {
         let salt_bytes = params.salt.as_bytes();
         let password_bytes = params.password.as_bytes();
@@ -22,30 +25,26 @@ pub fn derive_key_from_password(params: DeriveKeyFromPasswordParams) -> Result<S
         let iterations = NonZeroU32::new(params.iterations).ok_or("Invalid iterations")?;
 
         pbkdf2::derive(
-            pbkdf2::PBKDF2_HMAC_SHA512,
+            PBKDF2_ALG,
             iterations,
             salt_bytes,
             password_bytes,
             &mut key,
         );
+        let first_half = &key[0..(params.bit_length / 16)];
+        let second_half = &key[(params.bit_length / 16)..];
+        
+        println!("{:?}", hex::encode(second_half));
+        let second_half = hex::encode(second_half);
 
-        let key = hex::encode(key);
-        Ok(key)
-        // } else {
-        //     return Ok(base64::Engine::encode(key));
-        // }
-    // } else if params.environment == "browser" {
-    //     let client = Client::new();
-    //     let response = client.post("https://example.com/derive-key")
-    //         .json(&params)
-    //         .send()?
-    //         .json::<Value>()?;
-
-    //     if params.return_hex {
-    //         return Ok(response["key"].as_str().unwrap().to_string());
-    //     } else {
-    //         return Ok(base64::encode(&self, key));
-    //     }
-    // }
+        let mut context = Context::new(&SHA512);
+        context.update(second_half.as_bytes());
+        let digest = context.finish();
+        let final_key = hex::encode(digest.as_ref());
+        if !final_key.is_empty() {
+            return Ok(final_key);
+        }
+        Err(format!("crypto.utils.deriveKeyFromPassword not implemented for {} environment", params.environment).into())
 }
+
 

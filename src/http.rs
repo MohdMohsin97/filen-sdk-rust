@@ -62,10 +62,10 @@ impl Error for RequestError {}
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ApiResponse {
-    status: bool,
-    message: String,
-    code: String,
-    data: Option<Value>,
+    pub status: bool,
+    pub message: String,
+    pub code: String,
+    pub data: Option<Value>,
 }
 
 pub struct Client {
