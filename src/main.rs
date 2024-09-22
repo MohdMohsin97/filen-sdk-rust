@@ -1,5 +1,6 @@
 
 mod http;
+mod crypto;
 use crate::http::Client;
 use serde::Serialize;
 use http::HttpMethod as method;
