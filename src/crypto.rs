@@ -1,50 +1,50 @@
-use ring::pbkdf2;
-use ring::digest::{Context, SHA512};
-use serde::{Deserialize, Serialize};
-use std::num::NonZeroU32;
+use ring::digest::{self, digest};
+use ring::pbkdf2::{self, Algorithm};
 use std::error::Error;
+use std::num::NonZeroU32;
 
-static PBKDF2_ALG: pbkdf2::Algorithm = pbkdf2::PBKDF2_HMAC_SHA512;
+pub fn derive_key_from_password(
+    password: String,
+    salt: String,
+    hash: Algorithm,
+    iterations: u32,
+    bit_length: usize,
+) -> Result<String, Box<dyn Error>> {
+    let drive_key = run_pbkdf2(password, salt, hash, iterations, bit_length)?;
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct DeriveKeyFromPasswordParams {
-    pub password: String,
-    pub salt: String,
-    pub iterations: u32,
-    pub hash: String,
-    pub bit_length: usize,
-    pub return_hex: bool,
-    pub environment: String,
+    let _first_half = &drive_key[0..(drive_key.len() / 2)];
+    let second_half = &drive_key[(drive_key.len() / 2)..];
+
+    let key = run_sha512(second_half.to_owned());
+
+    Ok(key)
 }
 
-pub fn derive_key_from_password(params: DeriveKeyFromPasswordParams) -> Result<String, Box<dyn Error>> {
-    // if params.environment == "node" {
-        let salt_bytes = params.salt.as_bytes();
-        let password_bytes = params.password.as_bytes();
-        let mut key = vec![0u8; params.bit_length / 8];
-        let iterations = NonZeroU32::new(params.iterations).ok_or("Invalid iterations")?;
+fn run_pbkdf2(
+    password: String,
+    salt: String,
+    hash: Algorithm,
+    iterations: u32,
+    bit_length: usize,
+) -> Result<String, Box<dyn Error>> {
+    let mut key = vec![0u8; bit_length / 8];
 
-        pbkdf2::derive(
-            PBKDF2_ALG,
-            iterations,
-            salt_bytes,
-            password_bytes,
-            &mut key,
-        );
-        let first_half = &key[0..(params.bit_length / 16)];
-        let second_half = &key[(params.bit_length / 16)..];
-        
-        println!("{:?}", hex::encode(second_half));
-        let second_half = hex::encode(second_half);
+    pbkdf2::derive(
+        hash,
+        NonZeroU32::new(iterations).expect("Invalid Iterations"),
+        salt.as_bytes(),
+        password.as_bytes(),
+        &mut key,
+    );
 
-        let mut context = Context::new(&SHA512);
-        context.update(second_half.as_bytes());
-        let digest = context.finish();
-        let final_key = hex::encode(digest.as_ref());
-        if !final_key.is_empty() {
-            return Ok(final_key);
-        }
-        Err(format!("crypto.utils.deriveKeyFromPassword not implemented for {} environment", params.environment).into())
+    let drive_key = hex::encode(key);
+
+    Ok(drive_key)
 }
 
+fn run_sha512(data: String) -> String {
+    let hex = digest(&digest::SHA512, data.as_bytes());
+
+    hex::encode(hex)
+}
 

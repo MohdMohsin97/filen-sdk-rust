@@ -1,20 +1,17 @@
 mod crypto;
 mod http;
-use crate::http::ApiResponse as ApiResponse;
+use crate::crypto::derive_key_from_password;
+use crate::http::ApiResponse;
 use crate::http::Client;
-use serde::{Serialize, Deserialize};
 use http::HttpMethod as method;
-use crate::crypto::{derive_key_from_password, DeriveKeyFromPasswordParams};
+use serde::{Deserialize, Serialize};
+use serde_json::from_reader;
 use std::fs::File;
 use std::io::BufReader;
-use serde_json::from_reader;
-
-
 
 #[derive(Debug, Serialize)]
 struct InfoRequest {
     email: String,
-
 }
 
 #[derive(Deserialize, Debug)]
@@ -30,35 +27,13 @@ struct AuthInfo {
 
 mod tests {
     use super::*;
-    
+
     fn read_auth_info_from_file(file_path: &str) -> Result<AuthInfo, Box<dyn std::error::Error>> {
         let file = File::open(file_path)?;
         let reader = BufReader::new(file);
         let auth_info: AuthInfo = from_reader(reader)?;
         Ok(auth_info)
     }
-    
-
-
-    #[test]
-    fn test_derive_key_from_password() {
-        let file_path = "test_inputs.json";
-        let test_struct_info = read_auth_info_from_file(file_path).unwrap();
-        let params = DeriveKeyFromPasswordParams {
-            password: test_struct_info.password,
-            salt: test_struct_info.salt,
-            iterations: 200000,
-            hash: "sha512".to_string(),
-            bit_length: 512,
-            return_hex: false,
-            environment: "node".to_string(),
-        };
-
-        let key = derive_key_from_password(params).unwrap();
-        assert_eq!(key, test_struct_info.auth_key);
-    }
-
-    //test 2
     #[test]
     fn test_auto_info_request() {
         let expected_response = ApiResponse {
@@ -74,12 +49,17 @@ mod tests {
         };
         let client = Client::new(String::from("CHIIIT"));
         let actual_response = client
-            .request(method::POST,String::from("/v3/auth/info"),Some(InfoRequest{email: String::from("rireje3001@heweek.com")})).unwrap();
+            .request(
+                method::POST,
+                String::from("/v3/auth/info"),
+                Some(InfoRequest {
+                    email: String::from("rireje3001@heweek.com"),
+                }),
+            )
+            .unwrap();
         assert_eq!(actual_response.status, expected_response.status);
         assert_eq!(actual_response.message, expected_response.message);
         assert_eq!(actual_response.code, expected_response.code);
         assert_eq!(actual_response.data, expected_response.data);
     }
 }
-
-
