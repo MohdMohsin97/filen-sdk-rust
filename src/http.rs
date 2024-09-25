@@ -41,6 +41,14 @@ pub struct RequestError {
     source: Box<dyn Error>,
 }
 
+#[derive(Debug)]
+struct LoginResponse {
+    api_key: String,
+    master_key: String,
+    public_key: String,
+    private_key: String,
+}
+
 impl RequestError {
     fn new(message: String, method: HttpMethod, path: String, source: Box<dyn Error>) -> RequestError {
         RequestError {
@@ -96,10 +104,10 @@ impl Client {
                     ));
                 }
             }
+        
         } else {
             vec![]
         };
-
         // Build request
         let url = format!("{}{}", GATEWAY_URL, path);
         let client = HttpClient::new();
@@ -112,7 +120,6 @@ impl Client {
         // if let Some(ref api_key) = self.api_key {
         //     req = req.header("Authorization", format!("Bearer {}", api_key));
         // }
-
         // Send the request
         let response = req.timeout(Duration::from_secs(10)).send().map_err(|err| {
             RequestError::new(
