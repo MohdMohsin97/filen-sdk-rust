@@ -69,6 +69,7 @@ mod tests {
                 Some(InfoRequest {
                     email: auth_info.email.to_string(),
                 }),
+                None::<String>,
             )
             .unwrap();
         assert_eq!(actual_response.status, expected_response.status);
@@ -100,11 +101,17 @@ mod tests {
             email: auth_info.email,
             password: auth_info.auth_key,
             twoFactorCode: String::from("XXXXXX"),
-        })
+        }),
+        None::<String>,
     ).unwrap();
         assert_eq!(actual_response.status, expected_response.status);
         assert_eq!(actual_response.message, expected_response.message);
         assert_eq!(actual_response.code, expected_response.code);
         assert_eq!(actual_response.data, expected_response.data);
+    }
+
+    #[test]
+    fn test_base_folder() {
+
     }
 }

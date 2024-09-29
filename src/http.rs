@@ -41,13 +41,6 @@ pub struct RequestError {
     source: Box<dyn Error>,
 }
 
-#[derive(Debug)]
-struct LoginResponse {
-    api_key: String,
-    master_key: String,
-    public_key: String,
-    private_key: String,
-}
 
 impl RequestError {
     fn new(message: String, method: HttpMethod, path: String, source: Box<dyn Error>) -> RequestError {
@@ -90,6 +83,7 @@ impl Client {
         method: HttpMethod,
         path: String,
         request: Option<T>,
+        api_key: Option<String>,
     ) -> Result<ApiResponse, RequestError> {
         // Marshalled request body
         let marshalled = if let Some(req_body) = request {
@@ -108,18 +102,22 @@ impl Client {
         } else {
             vec![]
         };
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert("Content-Type", "application/json".parse().expect("Invalid header value"));
+
+        if let Some(ref api_key) = api_key {
+            headers.insert("Authorization", format!("Bearar {}", api_key).parse().expect("Invalid header value"));
+            println!("Bearer {}", api_key);
+        }
+
         // Build request
         let url = format!("{}{}", GATEWAY_URL, path);
         let client = HttpClient::new();
         let req = client
             .request(method.to_reqwest_method(), url)
             .body(marshalled)
-            .header("Content-Type", "application/json");
+            .headers(headers);
 
-        // // Set Authorization header if API key is present
-        // if let Some(ref api_key) = self.api_key {
-        //     req = req.header("Authorization", format!("Bearer {}", api_key));
-        // }
         // Send the request
         let response = req.timeout(Duration::from_secs(10)).send().map_err(|err| {
             RequestError::new(
