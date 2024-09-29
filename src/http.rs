@@ -105,6 +105,7 @@ impl Client {
         let mut headers = reqwest::header::HeaderMap::new();
         headers.insert("Content-Type", "application/json".parse().expect("Invalid header value"));
 
+        // if api_key is provided, add it to the headers
         if let Some(ref api_key) = api_key {
             headers.insert("Authorization", format!("Bearar {}", api_key).parse().expect("Invalid header value"));
             println!("Bearer {}", api_key);
