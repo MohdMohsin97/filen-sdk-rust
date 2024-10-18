@@ -21,23 +21,21 @@ pub fn generate_random_key() -> [u8; 32] {
 pub fn run_aes_gcm_encryprion(
     data: &[u8],
     key: &[u8; 32],
-    nonce: &[u8; 12],
+    nonce: &super::Nonce,
 ) -> Result<Vec<u8>, Box<dyn Error>> {
     let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key));
 
-    let nonce = Nonce::from_slice(nonce);
+    let nonce = Nonce::from_slice(nonce.as_slice());
 
-    let cipher = match cipher.encrypt(nonce, data) {
-        Ok(cipher) => cipher,
-        Err(_) => return Err(Box::<dyn Error>::from("encyption failure")),
-    };
-    Ok(cipher)
+    cipher
+        .encrypt(nonce, data)
+        .map_err(|_| Box::<dyn Error>::from("encyption failure"))
 }
 
 pub fn run_aes_gcm_decryption(
     encryption_data: &[u8],
     key: &[u8; 32],
-    nonce: &[u8; 12],
+    nonce: &[u8],
 ) -> Result<Vec<u8>, Box<dyn Error>> {
     let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key));
     let nonce = Nonce::from_slice(nonce);
@@ -68,10 +66,5 @@ pub fn run_pbkdf2(
 }
 
 pub fn vec_u8_to_string(vec: Vec<u8>) -> String {
-    vec.iter()
-        .map(|v| v.to_string())
-        .collect::<Vec<String>>()
-        .join("")
+    vec.iter().map(ToString::to_string).collect()
 }
-
-
