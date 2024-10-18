@@ -1,11 +1,11 @@
-use aes_gcm::aead::rand_core::RngCore;
-use aes_gcm::aead::{Aead, OsRng};
-use aes_gcm::{Aes256Gcm, Key, KeyInit, Nonce};
-use ring::digest::{self, digest};
-use ring::pbkdf2::{self, Algorithm, PBKDF2_HMAC_SHA512};
-use std::error::Error;
-use std::num::NonZeroU32;
+mod utils;
 
+use aes_gcm::aead::{rand_core::RngCore, OsRng};
+use base64::prelude::*;
+use hex::encode;
+use ring::pbkdf2::{Algorithm, PBKDF2_HMAC_SHA512};
+use std::error::Error;
+use utils::{run_aes_gcm_decryption, run_aes_gcm_encryprion, run_pbkdf2, run_sha512};
 struct DrivedMasterKeyAndPassword {
     master_key: String,
     derived_password: String,
@@ -43,73 +43,44 @@ fn generate_password_and_master_key(
     })
 }
 
-fn run_pbkdf2(
-    password: String,
-    salt: String,
-    hash: Algorithm,
-    iterations: u32,
-    bit_length: usize,
-) -> Result<Vec<u8>, Box<dyn Error>> {
-    let mut key = vec![0u8; bit_length / 8];
+fn encrypt_metadata(metadata: String, key: [u8; 32]) -> Result<String, Box<dyn Error>> {
+    let mut nonce = [0u8; 12];
+    OsRng.fill_bytes(&mut nonce);
 
-    pbkdf2::derive(
-        hash,
-        NonZeroU32::new(iterations).expect("Invalid Iterations"),
-        salt.as_bytes(),
-        password.as_bytes(),
-        &mut key,
-    );
-
-    Ok(key)
-}
-
-fn run_sha512(data: String) -> String {
-    let hex = digest(&digest::SHA512, data.as_bytes());
-
-    hex::encode(hex)
-}
-
-fn generate_random_key() -> [u8; 32] {
-    let mut key = [0u8; 32];
-    OsRng.fill_bytes(&mut key);
-    key
-}
-
-fn run_aes_gcm_encryprion(
-    data: &[u8],
-    key: &[u8; 32],
-    nonce: &[u8; 12],
-) -> Result<Vec<u8>, Box<dyn Error>> {
-    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key));
-
-    let nonce = Nonce::from_slice(nonce);
-
-    let cipher = match cipher.encrypt(nonce, data) {
-        Ok(cipher) => cipher,
-        Err(_) => return Err(Box::<dyn Error>::from("encyption failure")),
+    let result = run_aes_gcm_encryprion(&metadata.as_bytes(), &key, &nonce)?;
+    
+    let result_str = BASE64_STANDARD.encode(&result);
+    
+    // // SAFETY: 
+    let nonce_str = unsafe {
+        String::from_utf8_unchecked(nonce.to_vec())
     };
-    Ok(cipher)
+
+    Ok(format!("{}{}{}","002", nonce_str, result_str))
 }
 
-fn run_aes_gcm_decryption(
-    encryption_data: &[u8],
-    key: &[u8; 32],
-    nonce: &[u8; 12],
-) -> Result<Vec<u8>, Box<dyn Error>> {
-    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key));
-    let nonce = Nonce::from_slice(nonce);
-    match cipher.decrypt(nonce, encryption_data) {
-        Ok(data) => Ok(data),
-        Err(_) => return Err(Box::<dyn Error>::from("decryption failure")),
-    }
+fn decrypt_metadata(metadata: String, key: [u8; 32]) -> Result<String, Box<dyn Error>> {
+    let nonce_str = &metadata[3..15];
+
+    let nonce: &[u8; 12] = nonce_str.as_bytes().try_into()?;
+
+    let encrypted = BASE64_STANDARD.decode(&metadata[15..])?;
+
+    let result = run_aes_gcm_decryption(&encrypted, &key, nonce)?;
+
+    let result_str = String::from_utf8(result)?;
+
+    Ok(result_str)
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
+    use aes_gcm::aead::{rand_core::RngCore, OsRng};
     use serde::Deserialize;
     use serde_json::from_reader;
     use std::{fs::File, io::BufReader};
+    use utils::{generate_random_key, run_aes_gcm_decryption, run_aes_gcm_encryprion};
 
     #[derive(Deserialize, Debug)]
     struct TestInfo {
@@ -148,5 +119,18 @@ mod test {
         let decrypt_data = run_aes_gcm_decryption(&encrypt_data, &key, &nonce).unwrap();
 
         assert_eq!(decrypt_data, data);
+    }
+
+    #[test]
+    fn test_metadata_encrypt_decrypt() {
+        let metadata = String::from("MetaData");
+
+        let key = generate_random_key();
+
+        let encypt_metadata = encrypt_metadata(metadata.to_owned(), key).unwrap();
+
+        let decrypt_metadata = decrypt_metadata(encypt_metadata, key).unwrap();
+
+        assert_eq!(metadata, decrypt_metadata);
     }
 }
