@@ -35,10 +35,10 @@ pub fn run_aes_gcm_encryprion(
 pub fn run_aes_gcm_decryption(
     encryption_data: &[u8],
     key: &[u8; 32],
-    nonce: &[u8],
+    nonce: &super::Nonce,
 ) -> Result<Vec<u8>, Box<dyn Error>> {
     let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key));
-    let nonce = Nonce::from_slice(nonce);
+    let nonce = Nonce::from_slice(nonce.as_slice());
     match cipher.decrypt(nonce, encryption_data) {
         Ok(data) => Ok(data),
         Err(_) => return Err(Box::<dyn Error>::from("decryption failure")),

@@ -3,8 +3,8 @@ mod utils;
 use aes_gcm::aead::{rand_core::RngCore, OsRng};
 use base64::prelude::*;
 use ring::pbkdf2::{Algorithm, PBKDF2_HMAC_SHA512};
-use std::{error::Error, fmt::Display, marker::PhantomData, str::FromStr};
-use utils::{run_aes_gcm_decryption, run_aes_gcm_encryprion, run_pbkdf2, run_sha512};
+use std::{error::Error, fmt::Display};
+use utils::{generate_random_key, run_aes_gcm_decryption, run_aes_gcm_encryprion, run_pbkdf2, run_sha512};
 
 const METADATA_IDENTIFIER: &str = "002";
 
@@ -48,6 +48,12 @@ fn generate_password_and_master_key(
 struct Nonce([u8; 12]);
 
 impl Nonce {
+    fn new() -> Self {
+        let mut nonce = [0u8; 12];
+        OsRng.fill_bytes(&mut nonce);
+        Nonce::from_slice(&nonce)
+    }
+
     fn from_slice(slice: &[u8]) -> Self {
         let mut nonce = [0u8; 12];
         nonce.copy_from_slice(slice);
@@ -75,6 +81,10 @@ impl Display for Nonce {
 struct Key([u8; 32]);
 
 impl Key {
+    fn new() -> Self {
+        Self(generate_random_key())
+    }
+
     fn from_slice(slice: &[u8]) -> Self {
         let mut key = [0u8; 32];
         key.copy_from_slice(slice);
@@ -86,19 +96,15 @@ impl Key {
     }
 }
 
-struct MetadataCrypto {
+struct MetadataEncrypto {
     key: Key,
     nonce: Nonce,
     metadata: Vec<u8>,
 }
 
-impl MetadataCrypto {
+impl MetadataEncrypto {
     fn new(metadata: impl AsRef<[u8]>, key: &Key) -> Result<Self, ()> {
-        let nonce = {
-            let mut nonce = [0u8; 12];
-            OsRng.fill_bytes(&mut nonce);
-            Nonce::from_slice(&nonce)
-        };
+        let nonce = Nonce::new();
 
         let encrypted_metadata =
             run_aes_gcm_encryprion(metadata.as_ref(), key.as_slice(), &nonce).map_err(|_| ())?;
@@ -109,27 +115,9 @@ impl MetadataCrypto {
             metadata: encrypted_metadata,
         })
     }
-
-    pub fn new_with_key(key: Key) -> Self {
-        Self {
-            key,
-            nonce: Nonce([0u8; 12]),
-            metadata: Vec::new(),
-        }
-    }
-
-    // pub decrypt_with_key(key: &Key) -> Vec<u8> {}
 }
 
-impl FromStr for MetadataCrypto {
-    type Err = ();
-
-    fn from_str(metadata: &str) -> Result<Self, Self::Err> {
-        todo!("Moseen bhai");
-    }
-}
-
-impl Display for MetadataCrypto {
+impl Display for MetadataEncrypto {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -141,18 +129,28 @@ impl Display for MetadataCrypto {
     }
 }
 
-fn decrypt_metadata(metadata: String, key: [u8; 32]) -> Result<String, Box<dyn Error>> {
-    let nonce_str = &metadata[3..15];
+struct MetadataDecrypto {
+    metadata: String,
+    key: Key,
+}
 
-    let nonce: &[u8; 12] = nonce_str.as_bytes().try_into()?;
+impl MetadataDecrypto {
+    fn new(metadata: String, key: &Key) -> Result<Self, ()> {
+        let nonce_str = &metadata[3..15];
 
-    let encrypted = BASE64_STANDARD.decode(&metadata[15..])?;
+        let nonce = Nonce::from_slice(nonce_str.as_bytes());
 
-    let result = run_aes_gcm_decryption(&encrypted, &key, nonce)?;
+        let encrypted = BASE64_STANDARD.decode(&metadata[15..]).map_err(|_| ())?;
 
-    let result_str = String::from_utf8(result)?;
+        let result = run_aes_gcm_decryption(&encrypted, key.as_slice(), &nonce).map_err(|_| ())?;
 
-    Ok(result_str)
+        let result_str = String::from_utf8(result).map_err(|_| ())?;
+
+        Ok(MetadataDecrypto {
+            metadata: result_str,
+            key: key.clone(),
+        })
+    }
 }
 
 #[cfg(test)]
@@ -162,7 +160,7 @@ mod test {
     use serde::Deserialize;
     use serde_json::from_reader;
     use std::{fs::File, io::BufReader};
-    use utils::{generate_random_key, run_aes_gcm_decryption, run_aes_gcm_encryprion};
+    use utils::generate_random_key;
 
     #[derive(Deserialize, Debug)]
     struct TestInfo {
@@ -191,32 +189,27 @@ mod test {
     #[test]
     fn test_encrypt_decrypt_chunk() {
         let data = b"Hello, this is a test message!";
-        let mut nonce = [0u8; 12];
-        OsRng.fill_bytes(&mut nonce);
+        let nonce = Nonce::new();
 
-        let metadata = MetadataCrypto::new(
-            "Hello this is a test".to_owned(),
-            &Key::from_slice(&generate_random_key()),
-        )
-        .unwrap();
+        let key = generate_random_key();
 
-        let encrypted = metadata.to_string();
+        let encrypt_data = run_aes_gcm_encryprion(data, &key, &nonce).unwrap();
 
-        let decrypt_data = decrypt_metadata(encrypted, generate_random_key()).unwrap();
+        let decrypt_data = run_aes_gcm_decryption(&encrypt_data, &key, &nonce).unwrap();
 
         assert_eq!(decrypt_data, data);
     }
 
     #[test]
     fn test_metadata_encrypt_decrypt() {
-        let metadata = String::from("MetaData");
+        let metadata = String::from("This is test metadata");
 
-        let key = generate_random_key();
+        let key = Key::new();
 
-        let encypt_metadata = encrypt_metadata(metadata.to_owned(), key).unwrap();
+        let encypt_metadata = MetadataEncrypto::new(metadata.to_owned(), &key).unwrap();
 
-        let decrypt_metadata = decrypt_metadata(encypt_metadata, key).unwrap();
+        let decrypt_metadata = MetadataDecrypto::new(encypt_metadata.to_string(), &key).unwrap();
 
-        assert_eq!(metadata, decrypt_metadata);
+        assert_eq!(metadata, decrypt_metadata.metadata);
     }
 }
