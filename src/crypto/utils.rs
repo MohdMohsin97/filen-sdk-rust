@@ -1,6 +1,7 @@
 use aes_gcm::aead::rand_core::RngCore;
 use aes_gcm::aead::{Aead, OsRng};
 use aes_gcm::{Aes256Gcm, Key, KeyInit, Nonce};
+use rand::{random, thread_rng, Rng};
 use ring::digest::{self, digest};
 use ring::pbkdf2::{self, Algorithm};
 use std::error::Error;
@@ -12,18 +13,27 @@ pub fn run_sha512(data: String) -> String {
     hex::encode(hex)
 }
 
-pub fn generate_random_key() -> [u8; 32] {
-    let mut key = [0u8; 32];
-    OsRng.fill_bytes(&mut key);
+pub fn generate_random_key(length: usize) -> String {
+    let chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+
+    let mut key = String::new();
+
+    let mut rng = thread_rng();
+
+    for _ in 0..length {
+        let idx = rng.gen_range(0..chars.len());
+        key.push(chars.chars().nth(idx).unwrap());
+    }
+
     key
 }
 
 pub fn run_aes_gcm_encryprion(
     data: &[u8],
-    key: &[u8; 32],
+    key: &super::Key,
     nonce: &super::Nonce,
 ) -> Result<Vec<u8>, Box<dyn Error>> {
-    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key));
+    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key.as_slice()));
 
     let nonce = Nonce::from_slice(nonce.as_slice());
 
@@ -34,10 +44,10 @@ pub fn run_aes_gcm_encryprion(
 
 pub fn run_aes_gcm_decryption(
     encryption_data: &[u8],
-    key: &[u8; 32],
+    key: &super::Key,
     nonce: &super::Nonce,
 ) -> Result<Vec<u8>, Box<dyn Error>> {
-    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key));
+    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key.as_slice()));
     let nonce = Nonce::from_slice(nonce.as_slice());
     match cipher.decrypt(nonce, encryption_data) {
         Ok(data) => Ok(data),
